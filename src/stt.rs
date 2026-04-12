@@ -7,16 +7,16 @@ struct AccelerationProbe {
 }
 
 fn detect_acceleration() -> AccelerationProbe {
-    let mut enabled = vec!["OpenMP"];
-    if cfg!(feature = "cuda") {
-        enabled.push("CUDA");
-    }
-    if cfg!(feature = "vulkan") {
-        enabled.push("Vulkan");
-    }
-
     let cuda_driver = std::path::Path::new("C:\\Windows\\System32\\nvcuda.dll").exists();
     let vulkan_driver = std::path::Path::new("C:\\Windows\\System32\\vulkan-1.dll").exists();
+
+    let mut build_tags = vec!["OpenMP"];
+    if cfg!(feature = "cuda") {
+        build_tags.push("CUDA");
+    }
+    if cfg!(feature = "vulkan") {
+        build_tags.push("Vulkan");
+    }
 
     let gpu_built = cfg!(feature = "cuda") || cfg!(feature = "vulkan");
     let gpu_driver =
@@ -24,12 +24,33 @@ fn detect_acceleration() -> AccelerationProbe {
     let use_gpu = gpu_built && gpu_driver;
 
     info!(
-        "acceleration build: {} | drivers: CUDA={}, Vulkan={} | runtime GPU={}",
-        enabled.join(", "),
+        "build features: {} | drivers: CUDA={}, Vulkan={}",
+        build_tags.join(", "),
         cuda_driver,
         vulkan_driver,
-        use_gpu
     );
+
+    if gpu_built && gpu_driver {
+        info!(
+            "GPU acceleration: ENABLED ({})",
+            if cfg!(feature = "cuda") {
+                "CUDA"
+            } else {
+                "Vulkan"
+            }
+        );
+    } else if gpu_built && !gpu_driver {
+        info!(
+            "GPU acceleration: DISABLED (built with {} but driver not found)",
+            if cfg!(feature = "cuda") {
+                "CUDA"
+            } else {
+                "Vulkan"
+            }
+        );
+    } else {
+        info!("GPU acceleration: DISABLED (CPU-only build)");
+    }
 
     AccelerationProbe { use_gpu }
 }
@@ -140,6 +161,15 @@ impl SttEngine {
             .map(|n| n.get().min(8) as i32)
             .unwrap_or(4)
             .max(1);
+
+        info!(
+            "engine config: lang={}, threads={}, beam_size={}, patience={:.2}, gpu={}",
+            language,
+            n_threads,
+            preset.beam_size.max(1),
+            preset.patience,
+            accel.use_gpu
+        );
 
         Ok(Self {
             _ctx: ctx,

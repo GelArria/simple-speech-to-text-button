@@ -1,7 +1,11 @@
 param(
     [Parameter(Position=0)]
     [ValidateSet("install", "uninstall", "start", "stop", "restart", "status", "run", "config")]
-    [string]$Action
+    [string]$Action,
+
+    [switch]$Cuda,
+    [switch]$Vulkan,
+    [switch]$Cpu
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +13,36 @@ $ExeName = "simplestt.exe"
 $ExePath = "$PSScriptRoot\target\release\$ExeName"
 $StartMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
 $LnkPath = "$StartMenu\simpleSTT.lnk"
+
+function Resolve-BuildFeatures {
+    if ($Cpu) {
+        Write-Host "  Backend: CPU (forced)" -ForegroundColor DarkGray
+        return @()
+    }
+    if ($Cuda) {
+        Write-Host "  Backend: CUDA (forced)" -ForegroundColor DarkGray
+        return @("cuda")
+    }
+    if ($Vulkan) {
+        Write-Host "  Backend: Vulkan (forced)" -ForegroundColor DarkGray
+        return @("vulkan")
+    }
+
+    $hasNvidia = Test-Path "C:\Windows\System32\nvcuda.dll"
+    $hasVulkan = Test-Path "C:\Windows\System32\vulkan-1.dll"
+
+    if ($hasNvidia) {
+        Write-Host "  Backend: CUDA (auto-detected nvcuda.dll)" -ForegroundColor Green
+        return @("cuda")
+    }
+    if ($hasVulkan) {
+        Write-Host "  Backend: Vulkan (auto-detected vulkan-1.dll)" -ForegroundColor Green
+        return @("vulkan")
+    }
+
+    Write-Host "  Backend: CPU (no GPU driver detected)" -ForegroundColor DarkGray
+    return @()
+}
 
 function Build-Exe {
     $ucrt = "${env:ProgramFiles(x86)}\Windows Kits\10\Include\10.0.26100.0\ucrt"
@@ -22,15 +56,40 @@ function Build-Exe {
     $env:PATH = "$env:USERPROFILE\.cargo\bin;C:\Program Files\LLVM\bin;C:\Program Files\CMake\bin;$env:PATH"
     $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
 
-    Write-Host "Building..." -ForegroundColor Yellow
-    $buildOutput = & cmd /c "cargo build --release --manifest-path `"$PSScriptRoot\Cargo.toml`" 2>&1"
+    $features = Resolve-BuildFeatures
+    $featuresArg = if ($features.Count -gt 0) { "--features $($features -join ',')" } else { "" }
+
+    $label = if ($features.Count -gt 0) { " ($($features -join ', '))" } else { " (CPU)" }
+    Write-Host "Building...$label" -ForegroundColor Yellow
+
+    $buildOutput = & cmd /c "cargo build --release --manifest-path `"$PSScriptRoot\Cargo.toml`" $featuresArg 2>&1"
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         Write-Host ($buildOutput | Out-String) -ForegroundColor Red
         throw "Build failed"
     }
-    Write-Host "Build succeeded." -ForegroundColor Green
-    if (-not (Test-Path $ExePath)) { throw "Build failed" }
+
+    $warnings = ($buildOutput | Where-Object { $_ -match "warning:" }) | Measure-Object | Select-Object -ExpandProperty Count
+    Write-Host "Build succeeded.$label" -ForegroundColor Green
+    if ($warnings -gt 0) {
+        Write-Host "  ($warnings warning(s))" -ForegroundColor DarkGray
+    }
+    if (-not (Test-Path $ExePath)) { throw "Build failed - no executable produced" }
+
+    $exeBytes = [System.IO.File]::ReadAllBytes($ExePath)
+    $exeText = [System.Text.Encoding]::ASCII.GetString($exeBytes)
+    $hasCudaSym = $exeText -match "nvcuda"
+    $hasVulkanSym = $exeText -match "vulkan"
+
+    if ($features -contains "cuda" -and -not $hasCudaSym) {
+        Write-Host "  WARNING: CUDA feature requested but binary does not reference nvcuda" -ForegroundColor Yellow
+    } elseif ($features -contains "vulkan" -and -not $hasVulkanSym) {
+        Write-Host "  WARNING: Vulkan feature requested but binary does not reference vulkan" -ForegroundColor Yellow
+    }
+
+    $gpuTag = if ($hasCudaSym) { "CUDA" } elseif ($hasVulkanSym) { "Vulkan" } else { "CPU-only" }
+    $size = [math]::Round((Get-Item $ExePath).Length / 1MB, 1)
+    Write-Host "  Output: $ExePath ($size MB, $gpuTag)" -ForegroundColor DarkGray
 }
 
 function Get-ProcessStt { Get-Process -Name "simplestt" -ErrorAction SilentlyContinue }
@@ -365,6 +424,13 @@ simpleSTT commands:
   .\stt.ps1 config      Change model, preset, language, hotkey
   .\stt.ps1 install     Build + create Start Menu shortcut
   .\stt.ps1 uninstall   Stop + remove shortcuts
+
+GPU flags (append to build/run/start/install/restart):
+  -Cuda       Force CUDA build
+  -Vulkan     Force Vulkan build
+  -Cpu        Force CPU-only build (no GPU)
+
+Auto-detect: by default uses CUDA if nvcuda.dll found, Vulkan if vulkan-1.dll found.
 "@ -ForegroundColor Cyan
     }
 }
