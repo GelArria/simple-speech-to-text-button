@@ -195,6 +195,43 @@ fn config_path() -> Option<PathBuf> {
         .map(|dirs| dirs.config_dir().join("config.toml"))
 }
 
+fn exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn install_dir() -> PathBuf {
+    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
+        format!("{}\\AppData\\Local", home)
+    });
+    PathBuf::from(local_app_data)
+        .join("Programs")
+        .join("simplestt")
+}
+
+pub fn model_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![];
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd.join("models"));
+    }
+    let exe = exe_dir();
+    if !dirs.contains(&exe.join("models")) {
+        dirs.push(exe.join("models"));
+    }
+    let inst = install_dir();
+    if !dirs.contains(&inst.join("models")) {
+        dirs.push(inst.join("models"));
+    }
+    dirs
+}
+
+pub fn first_models_dir() -> Option<PathBuf> {
+    model_search_dirs().into_iter().find(|d| d.exists())
+}
+
 impl AppConfig {
     pub fn load() -> Self {
         let path = match config_path() {

@@ -89,59 +89,54 @@ Models (best to worst accuracy):
 | `ggml-base.bin` | ~140 MB | Good | Fast |
 | `ggml-tiny.bin` | ~75 MB | Basic | Quick testing |
 
-### 2. Build
+### 2. Build and install
 
 **Windows (PowerShell):**
 
 ```powershell
-.\stt.ps1 run
+.\stt.ps1 install
 ```
 
-This handles build + run with correct PATH for LLVM and CMake.
+This builds the binary (auto-detects CUDA/Vulkan/CPU) and installs it globally to your PATH.
 
 **Or build manually:**
 
 **With CUDA (NVIDIA GPU -- recommended):**
-
 ```bash
-# Windows / Linux
 cargo build --release --features cuda
 ```
 
 **CPU only:**
-
 ```bash
 cargo build --release
 ```
 
 **With Vulkan (AMD/Intel GPU):**
-
 ```bash
-# Windows / Linux
 cargo build --release --features vulkan
 ```
 
-### 3. Run
+### 3. Use
 
-```bash
-# Windows
-.\target\release\simplestt.exe
-
-# Linux / macOS
-./target/release/simplestt
-```
-
-Or use the management script:
+After `.\stt.ps1 install`, open a **new terminal** and use:
 
 ```powershell
-.\stt.ps1 run        # build + run in foreground with logs
-.\stt.ps1 start      # start in background
-.\stt.ps1 stop       # stop
-.\stt.ps1 restart    # restart
-.\stt.ps1 status     # check if running
-.\stt.ps1 config     # interactive configuration menu
-.\stt.ps1 install    # build + create Start Menu shortcut
-.\stt.ps1 uninstall  # stop + remove shortcuts, config, and executable
+simplestt              # Run overlay (default)
+simplestt run          # Same as above
+simplestt start        # Start in background
+simplestt stop         # Stop running instance
+simplestt restart      # Stop + start
+simplestt status       # Show if running
+simplestt config       # Interactive configuration menu
+simplestt install      # Install globally to PATH
+simplestt uninstall    # Uninstall from system
+```
+
+GPU flags for build (Windows only):
+```powershell
+.\stt.ps1 build -Cuda     # Force CUDA
+.\stt.ps1 build -Vulkan   # Force Vulkan
+.\stt.ps1 build -Cpu      # Force CPU-only
 ```
 
 ## Usage
@@ -226,10 +221,10 @@ The preset controls: `energy_threshold` (VAD sensitivity), `silence_frames_neede
 ### Interactive Config Menu
 
 ```powershell
-.\stt.ps1 config
+simplestt config
 ```
 
-Opens an interactive menu to change model, microphone preset, language, and hotkey without editing the TOML file directly. The model selector lists all 22 known whisper models with download-on-demand for uninstalled ones.
+Opens an interactive menu to change model, microphone preset, language, hotkey, and timing without editing the TOML file directly. The model selector lists all 22 known whisper models with download-on-demand for uninstalled ones.
 
 ### Languages
 
@@ -253,13 +248,20 @@ Whisper supports 99 languages. Set `language` in config or via the config menu:
 
 ```
 src/
-  main.rs      -- Entry point, worker thread, pipeline
-  stt.rs       -- Whisper engine (whisper-rs), VAD, transcription
-  audio.rs     -- Mic capture + resampling (cpal + ringbuf)
-  injector.rs  -- Text injection via SendInput (Unicode)
-  hotkey.rs    -- Global hotkey registration (Win32)
-  overlay.rs   -- Draggable overlay button (Win32 + GDI)
-  config.rs    -- TOML config load/save
+  main.rs              -- Entry point, CLI dispatch
+  cli.rs               -- CLI definition (clap)
+  commands/
+    mod.rs             -- Command dispatcher
+    run.rs             -- Overlay, worker thread, pipeline
+    manage.rs          -- start/stop/restart/status
+    config_menu.rs     -- Interactive configuration
+    install.rs         -- Global install/uninstall
+  stt.rs               -- Whisper engine (whisper-rs), VAD, transcription
+  audio.rs             -- Mic capture + resampling (cpal + ringbuf)
+  injector.rs          -- Text injection via SendInput (Unicode)
+  hotkey.rs            -- Global hotkey registration (Win32)
+  overlay.rs           -- Draggable overlay button (Win32 + GDI)
+  config.rs            -- TOML config load/save, path resolution
 ```
 
 ## Building from Scratch (Troubleshooting)
