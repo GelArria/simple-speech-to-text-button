@@ -11,7 +11,26 @@ pub struct AppConfig {
     pub ui: UiConfig,
     pub audio: AudioConfig,
     pub mic_preset: MicPreset,
+    pub timing: TimingConfig,
     pub first_run: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct TimingConfig {
+    pub silence_timeout_ms: u64,
+    pub min_speech_ms: u64,
+    pub max_utterance_secs: u64,
+}
+
+impl Default for TimingConfig {
+    fn default() -> Self {
+        Self {
+            silence_timeout_ms: 350,
+            min_speech_ms: 250,
+            max_utterance_secs: 30,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -152,7 +171,7 @@ impl Default for AudioConfig {
         Self {
             microphone_only: true,
             preferred_input_device: String::new(),
-            worker_sleep_ms: 10,
+            worker_sleep_ms: 2,
         }
     }
 }
@@ -165,6 +184,7 @@ impl Default for AppConfig {
             ui: UiConfig::default(),
             audio: AudioConfig::default(),
             mic_preset: MicPreset::default(),
+            timing: TimingConfig::default(),
             first_run: true,
         }
     }

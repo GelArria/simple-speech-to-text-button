@@ -321,6 +321,7 @@ fn main() {
         &config.stt.model_path,
         &config.stt.language,
         config.mic_preset.clone(),
+        &config.timing,
     ) {
         Ok(engine) => {
             *stt.lock().unwrap() = Some(engine);

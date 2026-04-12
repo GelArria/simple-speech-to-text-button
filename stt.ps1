@@ -194,7 +194,12 @@ size = 48
 [audio]
 microphone_only = true
 preferred_input_device = ""
-worker_sleep_ms = 10
+worker_sleep_ms = 2
+
+[timing]
+silence_timeout_ms = 350
+min_speech_ms = 250
+max_utterance_secs = 30
 
 [mic_preset]
 name = "Headset / USB mic"
@@ -221,6 +226,13 @@ entropy_thold = 2.4
         $pHotkey = '(?m)^start_stop\s*=\s*"(.+?)"'
         $currentHotkey = if ($content -match $pHotkey) { $Matches[1] } else { "F9" }
 
+        $pSilence = '(?m)^silence_timeout_ms\s*=\s*(\d+)'
+        $currentSilence = if ($content -match $pSilence) { $Matches[1] } else { "350" }
+        $pMinSpeech = '(?m)^min_speech_ms\s*=\s*(\d+)'
+        $currentMinSpeech = if ($content -match $pMinSpeech) { $Matches[1] } else { "250" }
+        $pMaxUtt = '(?m)^max_utterance_secs\s*=\s*(\d+)'
+        $currentMaxUtt = if ($content -match $pMaxUtt) { $Matches[1] } else { "30" }
+
         $changed = $false
 
         while ($true) {
@@ -228,10 +240,11 @@ entropy_thold = 2.4
             Write-Host ""
             Write-Host "  simpleSTT Configuration" -ForegroundColor Cyan
             Write-Host "  -----------------------------------------------" -ForegroundColor DarkGray
-            Write-Host "  Model:   $currentModel" -ForegroundColor White
-            Write-Host "  Preset:  $currentPreset" -ForegroundColor White
+            Write-Host "  Model:    $currentModel" -ForegroundColor White
+            Write-Host "  Preset:   $currentPreset" -ForegroundColor White
             Write-Host "  Language: $currentLang" -ForegroundColor White
-            Write-Host "  Hotkey:  $currentHotkey" -ForegroundColor White
+            Write-Host "  Hotkey:   $currentHotkey" -ForegroundColor White
+            Write-Host "  Silence:  ${currentSilence}ms  Min speech: ${currentMinSpeech}ms  Max utterance: ${currentMaxUtt}s" -ForegroundColor White
             if ($changed) {
                 Write-Host "  -----------------------------------------------" -ForegroundColor DarkGray
                 Write-Host "  * Unsaved changes" -ForegroundColor Yellow
@@ -242,10 +255,11 @@ entropy_thold = 2.4
             Write-Host "  [2] Microphone preset"
             Write-Host "  [3] Language"
             Write-Host "  [4] Hotkey"
-            Write-Host "  [5] Save & exit"
+            Write-Host "  [5] Silence & timing"
+            Write-Host "  [6] Save & exit"
             Write-Host "  [0] Exit without saving"
             Write-Host ""
-            $choice = Read-Host "  Select [0-5]"
+            $choice = Read-Host "  Select [0-6]"
 
             switch ($choice) {
                 "1" {
@@ -382,6 +396,47 @@ entropy_thold = 2.4
                     }
                 }
                 "5" {
+                    Write-Host ""
+                    Write-Host "  Timing configuration (milliseconds / seconds)" -ForegroundColor Cyan
+                    Write-Host "  Lower silence = faster response but may cut words on pauses" -ForegroundColor DarkGray
+                    Write-Host ""
+
+                    $val = Read-Host "  Silence timeout in ms (current: $currentSilence, default: 350)"
+                    if ($val -and $val -match '^\d+$') {
+                        $currentSilence = $val
+                        if ($content -match '(?m)^\[timing\]') {
+                            $content = $content -replace '(?m)^silence_timeout_ms\s*=\s*\d+', "silence_timeout_ms = $val"
+                        } else {
+                            $content += "`n[timing]`nsilence_timeout_ms = $val`nmin_speech_ms = $currentMinSpeech`nmax_utterance_secs = $currentMaxUtt`n"
+                        }
+                        $changed = $true
+                    }
+
+                    $val = Read-Host "  Min speech duration in ms (current: $currentMinSpeech, default: 250)"
+                    if ($val -and $val -match '^\d+$') {
+                        $currentMinSpeech = $val
+                        if ($content -match '(?m)^\[timing\]') {
+                            $content = $content -replace '(?m)^min_speech_ms\s*=\s*\d+', "min_speech_ms = $val"
+                        } else {
+                            $content += "`n[timing]`nsilence_timeout_ms = $currentSilence`nmin_speech_ms = $val`nmax_utterance_secs = $currentMaxUtt`n"
+                        }
+                        $changed = $true
+                    }
+
+                    $val = Read-Host "  Max utterance length in seconds (current: $currentMaxUtt, default: 30)"
+                    if ($val -and $val -match '^\d+$') {
+                        $currentMaxUtt = $val
+                        if ($content -match '(?m)^\[timing\]') {
+                            $content = $content -replace '(?m)^max_utterance_secs\s*=\s*\d+', "max_utterance_secs = $val"
+                        } else {
+                            $content += "`n[timing]`nsilence_timeout_ms = $currentSilence`nmin_speech_ms = $currentMinSpeech`nmax_utterance_secs = $val`n"
+                        }
+                        $changed = $true
+                    }
+
+                    Write-Host "  Timing updated." -ForegroundColor Green
+                }
+                "6" {
                     if ($changed) {
                         Set-Content -Path $configFile -Value $content -Encoding UTF8
                         Clear-Host

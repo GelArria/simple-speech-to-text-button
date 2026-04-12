@@ -1,6 +1,8 @@
-use crate::config::MicPreset;
+use crate::config::{MicPreset, TimingConfig};
 use log::{error, info};
 use std::time::Instant;
+
+const SAMPLE_RATE: usize = 16000;
 
 struct AccelerationProbe {
     use_gpu: bool,
@@ -137,8 +139,8 @@ pub struct SttEngine {
     patience: f32,
     vad_state: VadState,
     energy_threshold: f32,
-    silence_frames_needed: usize,
-    silence_frames_count: usize,
+    silence_timeout_samples: usize,
+    silence_sample_count: usize,
     min_speech_samples: usize,
     max_utterance_samples: usize,
     no_speech_thold: f32,
@@ -146,7 +148,12 @@ pub struct SttEngine {
 }
 
 impl SttEngine {
-    pub fn new(model_path: &str, language: &str, preset: MicPreset) -> Result<Self, String> {
+    pub fn new(
+        model_path: &str,
+        language: &str,
+        preset: MicPreset,
+        timing: &TimingConfig,
+    ) -> Result<Self, String> {
         info!("loading whisper model from {}", model_path);
         let accel = detect_acceleration();
         let mut params = whisper_rs::WhisperContextParameters::default();
@@ -157,18 +164,33 @@ impl SttEngine {
             .create_state()
             .map_err(|e: whisper_rs::WhisperError| format!("{}", e))?;
 
-        let n_threads = std::thread::available_parallelism()
-            .map(|n| n.get().min(8) as i32)
+        let available_threads = std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
             .unwrap_or(4)
             .max(1);
 
+        let n_threads = if accel.use_gpu {
+            (available_threads.min(4)).max(2)
+        } else {
+            (available_threads.min(8)).max(2)
+        };
+
+        let silence_timeout_samples =
+            ((timing.silence_timeout_ms as f64 / 1000.0) * SAMPLE_RATE as f64) as usize;
+        let min_speech_samples =
+            ((timing.min_speech_ms as f64 / 1000.0) * SAMPLE_RATE as f64) as usize;
+        let max_utterance_samples = timing.max_utterance_secs as usize * SAMPLE_RATE;
+
         info!(
-            "engine config: lang={}, threads={}, beam_size={}, patience={:.2}, gpu={}",
+            "engine config: lang={}, threads={}, beam_size={}, patience={:.2}, gpu={}, silence={}ms ({} samples), min_speech={}ms",
             language,
             n_threads,
             preset.beam_size.max(1),
             preset.patience,
-            accel.use_gpu
+            accel.use_gpu,
+            timing.silence_timeout_ms,
+            silence_timeout_samples,
+            timing.min_speech_ms,
         );
 
         Ok(Self {
@@ -185,10 +207,10 @@ impl SttEngine {
             },
             vad_state: VadState::Idle,
             energy_threshold: preset.energy_threshold,
-            silence_frames_needed: preset.silence_frames_needed,
-            silence_frames_count: 0,
-            min_speech_samples: preset.min_speech_samples,
-            max_utterance_samples: 16000 * 30,
+            silence_timeout_samples,
+            silence_sample_count: 0,
+            min_speech_samples,
+            max_utterance_samples,
             no_speech_thold: preset.no_speech_thold,
             entropy_thold: preset.entropy_thold,
         })
@@ -211,7 +233,7 @@ impl SttEngine {
             VadState::Idle => {
                 if energy > self.energy_threshold {
                     self.vad_state = VadState::Speech;
-                    self.silence_frames_count = 0;
+                    self.silence_sample_count = 0;
                     self.buffer.extend_from_slice(samples);
                     if prev_state != self.vad_state {
                         info!("VAD: speech detected");
@@ -221,12 +243,12 @@ impl SttEngine {
             VadState::Speech => {
                 self.buffer.extend_from_slice(samples);
                 if energy < self.energy_threshold {
-                    self.silence_frames_count += 1;
+                    self.silence_sample_count += samples.len();
                 } else {
-                    self.silence_frames_count = 0;
+                    self.silence_sample_count = 0;
                 }
 
-                if self.silence_frames_count >= self.silence_frames_needed {
+                if self.silence_sample_count >= self.silence_timeout_samples {
                     self.vad_state = VadState::SilenceAfterSpeech;
                 }
 
@@ -277,8 +299,8 @@ impl SttEngine {
         params.set_suppress_blank(true);
         params.set_suppress_nst(true);
         params.set_temperature(0.0);
-        params.set_temperature_inc(0.2);
-        params.set_single_segment(false);
+        params.set_temperature_inc(0.0);
+        params.set_single_segment(true);
         params.set_no_speech_thold(self.no_speech_thold);
         params.set_entropy_thold(self.entropy_thold);
 
@@ -315,7 +337,7 @@ impl SttEngine {
         info!(
             "transcribed {} samples ({:.1}s) in {}ms -> {:?}",
             samples.len(),
-            samples.len() as f32 / 16000.0,
+            samples.len() as f32 / SAMPLE_RATE as f32,
             elapsed,
             text
         );
@@ -356,6 +378,6 @@ impl SttEngine {
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.vad_state = VadState::Idle;
-        self.silence_frames_count = 0;
+        self.silence_sample_count = 0;
     }
 }
